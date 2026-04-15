@@ -1,30 +1,32 @@
-# Intermediate Lab 05 — Tagging Compliance Reporting
+# Intermediate Lab 05 - Storage Compliance Reporting
 
 ## Time Estimate
+
 - 45 to 75 minutes
 
 ## Prerequisites
-- At least two resource groups in subscription
-- Some resources intentionally missing one or more required tags
+
+- At least two storage accounts in the subscription
+- One storage account intentionally misconfigured (HTTP-only disabled, or public blob access enabled, or TLS below 1.2)
 - Bash and PowerShell available
 
 ## Objective
-Generate an audit-friendly tag compliance report for resource groups.
 
-## Required Tags
-- Owner
-- CostCenter
-- Environment
-- Workload
-- DataClass
-- ExpirationDate
+Generate an audit-friendly storage compliance report that verifies each account meets platform security standards.
+
+## Required Storage Controls
+
+- HTTPS-only traffic enforced (`supportsHttpsTrafficOnly = true`)
+- Minimum TLS version: TLS1_2
+- Public blob access disabled (`allowBlobPublicAccess = false`)
+- Soft delete for blobs enabled with retention >= 7 days
+- Soft delete for containers enabled
 
 ## Tasks
-1. Run PowerShell report:
-   - `shared/scripts/pwsh/validation/tag-compliance-report.ps1`
-2. Run CLI report:
-   - `shared/scripts/cli/validation/tag-compliance-report.sh`
-3. Attach outputs (CSV + JSON) to PR evidence
+
+1. Run PowerShell report: `shared/scripts/pwsh/validation/storage-compliance-report.ps1`
+2. Run CLI report: `shared/scripts/cli/validation/storage-compliance-report.sh`
+3. Cross-check outputs and attach CSV + JSON to PR evidence
 
 ## Step 1 - Execute PowerShell Report
 
@@ -32,13 +34,14 @@ Generate an audit-friendly tag compliance report for resource groups.
 $SubscriptionId = "<subscription-id>"
 Select-AzSubscription -SubscriptionId $SubscriptionId
 
-pwsh shared/scripts/pwsh/validation/tag-compliance-report.ps1 \
+pwsh shared/scripts/pwsh/validation/storage-compliance-report.ps1 `
   -SubscriptionId $SubscriptionId
 ```
 
 Expected outputs:
-- tag-compliance-report.csv
-- tag-compliance-report.json
+
+- `storage-compliance-report.csv`
+- `storage-compliance-report.json`
 
 ## Step 2 - Execute CLI Report
 
@@ -46,65 +49,95 @@ Expected outputs:
 SUB_ID="<subscription-id>"
 az account set --subscription "$SUB_ID"
 
-chmod +x shared/scripts/cli/validation/tag-compliance-report.sh
-shared/scripts/cli/validation/tag-compliance-report.sh "$SUB_ID"
+chmod +x shared/scripts/cli/validation/storage-compliance-report.sh
+shared/scripts/cli/validation/storage-compliance-report.sh "$SUB_ID"
 ```
 
 Expected outputs:
-- tag-compliance-report-cli.csv
-- tag-compliance-report-cli.json
+
+- `storage-compliance-report-cli.csv`
+- `storage-compliance-report-cli.json`
 
 ## Step 3 - Validate Output Quality
 
 Check that each report includes:
-- resource identifier
-- missing tags list
-- compliance status
-- recommended remediation
+
+- Storage account name and resource group
+- HTTPS-only status (compliant / non-compliant)
+- Minimum TLS version
+- Public access status
+- Blob soft delete status and retention days
+- Container soft delete status
+- Overall compliance verdict
 
 Quick checks:
 
 ```bash
-head -n 5 tag-compliance-report.csv
-jq '.[0]' tag-compliance-report.json
+head -n 5 storage-compliance-report.csv
+jq '.[0]' storage-compliance-report.json
 ```
 
 ## Step 4 - Reconcile Differences Between CLI and PowerShell Reports
-Create report-diff-summary.md describing:
-1. Count of resources scanned by each script
-2. Count of non-compliant resources in each output
-3. Any parsing or scope differences
+
+Create `report-diff-summary.md` describing:
+
+1. Count of storage accounts scanned by each script
+2. Count of non-compliant accounts in each output
+3. Any differences in which controls were evaluated
 4. Final source of truth and reason
 
 ## Step 5 - Create Remediation Plan
-Create remediation-plan.md with:
-- top 5 non-compliant resources by risk
-- tags to add
-- owner assignment
-- due date
-- verification command
 
-Example remediation command:
+Create `remediation-plan.md` with:
+
+- Top 3 non-compliant accounts by risk
+- Specific controls to fix
+- Owner assignment
+- Due date
+- Verification commands
+
+Example remediation commands:
 
 ```bash
-RESOURCE_ID="<resource-id>"
-az tag update --resource-id "$RESOURCE_ID" --operation merge --tags Owner="team-a" CostCenter="IT-104" Environment="dev" Workload="identity" DataClass="internal" ExpirationDate="2026-12-31"
+STORAGE_ACCOUNT="<account-name>"
+RG="<resource-group>"
+
+az storage account update \
+  --name "$STORAGE_ACCOUNT" \
+  --resource-group "$RG" \
+  --min-tls-version TLS1_2 \
+  --https-only true \
+  --allow-blob-public-access false
+```
+
+```powershell
+Update-AzStorageAccount `
+  -ResourceGroupName "<rg>" `
+  -Name "<account>" `
+  -MinimumTlsVersion TLS1_2 `
+  -EnableHttpsTrafficOnly $true `
+  -AllowBlobPublicAccess $false
 ```
 
 ## Acceptance Criteria
-- Report files generated
-- Non-compliance correctly flagged
-- Short remediation plan included
+
+- Both reports generated and non-empty
+- At least one non-compliant account correctly flagged
+- Reconciliation table complete
+- Remediation plan includes at least one specific account with commands
 
 ## Required Deliverables
-- tag-compliance-report.csv
-- tag-compliance-report.json
-- tag-compliance-report-cli.csv
-- tag-compliance-report-cli.json
-- report-diff-summary.md
-- remediation-plan.md
+
+- `storage-compliance-report.csv`
+- `storage-compliance-report.json`
+- `storage-compliance-report-cli.csv`
+- `storage-compliance-report-cli.json`
+- `report-diff-summary.md`
+- `remediation-plan.md`
 
 ## Troubleshooting
-- Empty report: verify subscription context and permissions
-- Permission denied running script: run chmod +x for CLI script
-- JSON parse errors: ensure jq is installed or inspect raw JSON directly
+
+- Empty report: verify subscription context; confirm you have Reader access to storage accounts in scope
+- Permission denied running CLI script: `chmod +x` the script before running
+- `jq` not installed: install via `sudo apt install jq` (Ubuntu) or `brew install jq` (macOS)
+- Soft delete controls not visible: confirm account kind is StorageV2; page blob accounts do not support container soft delete

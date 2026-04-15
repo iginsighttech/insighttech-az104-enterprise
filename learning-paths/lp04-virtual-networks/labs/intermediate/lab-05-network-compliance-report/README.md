@@ -1,30 +1,33 @@
-# Intermediate Lab 05 — Tagging Compliance Reporting
+# Intermediate Lab 05 - Network Compliance Reporting
 
 ## Time Estimate
+
 - 45 to 75 minutes
 
 ## Prerequisites
-- At least two resource groups in subscription
-- Some resources intentionally missing one or more required tags
+
+- At least two VNets or subnets in the subscription
+- One subnet intentionally missing an NSG association
+- Network Watcher enabled in at least one region
 - Bash and PowerShell available
 
 ## Objective
-Generate an audit-friendly tag compliance report for resource groups.
 
-## Required Tags
-- Owner
-- CostCenter
-- Environment
-- Workload
-- DataClass
-- ExpirationDate
+Generate an audit-friendly network compliance report that verifies each VNet and subnet meets platform security standards.
+
+## Required Network Controls
+
+- Every subnet has an NSG associated (except GatewaySubnet and AzureBastionSubnet)
+- Network Watcher is enabled in each region that has a VNet
+- No subnet uses the /8 or /16 address space without justification tag
+- DDoS protection plan is configured if required by policy (check policy assignment)
+- No VNet has an overlapping address space with hub VNets
 
 ## Tasks
-1. Run PowerShell report:
-   - `shared/scripts/pwsh/validation/tag-compliance-report.ps1`
-2. Run CLI report:
-   - `shared/scripts/cli/validation/tag-compliance-report.sh`
-3. Attach outputs (CSV + JSON) to PR evidence
+
+1. Run PowerShell report: `shared/scripts/pwsh/validation/network-compliance-report.ps1`
+2. Run CLI report: `shared/scripts/cli/validation/network-compliance-report.sh`
+3. Cross-check outputs and attach CSV + JSON to PR evidence
 
 ## Step 1 - Execute PowerShell Report
 
@@ -32,13 +35,14 @@ Generate an audit-friendly tag compliance report for resource groups.
 $SubscriptionId = "<subscription-id>"
 Select-AzSubscription -SubscriptionId $SubscriptionId
 
-pwsh shared/scripts/pwsh/validation/tag-compliance-report.ps1 \
+pwsh shared/scripts/pwsh/validation/network-compliance-report.ps1 `
   -SubscriptionId $SubscriptionId
 ```
 
 Expected outputs:
-- tag-compliance-report.csv
-- tag-compliance-report.json
+
+- `network-compliance-report.csv`
+- `network-compliance-report.json`
 
 ## Step 2 - Execute CLI Report
 
@@ -46,65 +50,94 @@ Expected outputs:
 SUB_ID="<subscription-id>"
 az account set --subscription "$SUB_ID"
 
-chmod +x shared/scripts/cli/validation/tag-compliance-report.sh
-shared/scripts/cli/validation/tag-compliance-report.sh "$SUB_ID"
+chmod +x shared/scripts/cli/validation/network-compliance-report.sh
+shared/scripts/cli/validation/network-compliance-report.sh "$SUB_ID"
 ```
 
 Expected outputs:
-- tag-compliance-report-cli.csv
-- tag-compliance-report-cli.json
+
+- `network-compliance-report-cli.csv`
+- `network-compliance-report-cli.json`
 
 ## Step 3 - Validate Output Quality
 
 Check that each report includes:
-- resource identifier
-- missing tags list
-- compliance status
-- recommended remediation
+
+- VNet name, resource group, and address space
+- Per-subnet NSG association status (compliant / non-compliant / exempt)
+- Network Watcher status per region
+- Overlapping address space check result
+- Overall compliance verdict per VNet
 
 Quick checks:
 
 ```bash
-head -n 5 tag-compliance-report.csv
-jq '.[0]' tag-compliance-report.json
+head -n 5 network-compliance-report.csv
+jq '.[0]' network-compliance-report.json
 ```
 
 ## Step 4 - Reconcile Differences Between CLI and PowerShell Reports
-Create report-diff-summary.md describing:
-1. Count of resources scanned by each script
-2. Count of non-compliant resources in each output
-3. Any parsing or scope differences
+
+Create `report-diff-summary.md` describing:
+
+1. Count of VNets and subnets scanned by each script
+2. Count of non-compliant subnets in each output
+3. Any differences in exempt subnet handling
 4. Final source of truth and reason
 
 ## Step 5 - Create Remediation Plan
-Create remediation-plan.md with:
-- top 5 non-compliant resources by risk
-- tags to add
-- owner assignment
-- due date
-- verification command
 
-Example remediation command:
+Create `remediation-plan.md` with:
+
+- Top 3 non-compliant subnets by risk
+- Specific controls to fix
+- Owner assignment
+- Due date
+- Verification commands
+
+Example remediation commands:
 
 ```bash
-RESOURCE_ID="<resource-id>"
-az tag update --resource-id "$RESOURCE_ID" --operation merge --tags Owner="team-a" CostCenter="IT-104" Environment="dev" Workload="identity" DataClass="internal" ExpirationDate="2026-12-31"
+RG="<resource-group>"
+VNET="<vnet-name>"
+SUBNET="<subnet-name>"
+NSG="<nsg-name>"
+
+az network vnet subnet update \
+  --resource-group "$RG" \
+  --vnet-name "$VNET" \
+  --name "$SUBNET" \
+  --network-security-group "$NSG"
+```
+
+```powershell
+$vnet   = Get-AzVirtualNetwork -ResourceGroupName "<rg>" -Name "<vnet>"
+$nsg    = Get-AzNetworkSecurityGroup -ResourceGroupName "<rg>" -Name "<nsg>"
+$subnet = $vnet.Subnets | Where-Object Name -eq "<subnet>"
+$subnet.NetworkSecurityGroup = $nsg
+Set-AzVirtualNetwork -VirtualNetwork $vnet | Out-Null
 ```
 
 ## Acceptance Criteria
-- Report files generated
-- Non-compliance correctly flagged
-- Short remediation plan included
+
+- Both reports generated and non-empty
+- At least one non-compliant subnet correctly flagged
+- Network Watcher status checked for all VNet regions
+- Reconciliation table complete
+- Remediation plan includes at least one specific subnet with commands
 
 ## Required Deliverables
-- tag-compliance-report.csv
-- tag-compliance-report.json
-- tag-compliance-report-cli.csv
-- tag-compliance-report-cli.json
-- report-diff-summary.md
-- remediation-plan.md
+
+- `network-compliance-report.csv`
+- `network-compliance-report.json`
+- `network-compliance-report-cli.csv`
+- `network-compliance-report-cli.json`
+- `report-diff-summary.md`
+- `remediation-plan.md`
 
 ## Troubleshooting
-- Empty report: verify subscription context and permissions
-- Permission denied running script: run chmod +x for CLI script
-- JSON parse errors: ensure jq is installed or inspect raw JSON directly
+
+- Empty report: verify subscription context; confirm Reader + Network Contributor access
+- GatewaySubnet falsely flagged as non-compliant: report script should include exemption list; update script if missing
+- Network Watcher status unknown: run `az network watcher list -o table` to check all registered watchers
+- Overlapping CIDR check inconclusive: script requires all VNet address prefixes in scope; ensure cross-subscription VNets are included if peered

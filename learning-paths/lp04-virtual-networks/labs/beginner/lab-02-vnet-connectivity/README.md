@@ -1,80 +1,82 @@
-# Beginner Lab 02 — Management Groups & Subscriptions
+# Beginner Lab 02 - VNet Connectivity
 
-**Goal:** Create (or validate) a management group hierarchy, move the subscription, and apply RBAC at MG scope.
+Goal: create hub-and-spoke virtual network connectivity with peering and route controls.
 
 ## Variables
 
-### Azure CLI
+Azure CLI:
+
 ```bash
-export SUBSCRIPTION_ID="<your-subscription-id>"
-export MG_ROOT="mg-az104-root"
-export MG_WORKLOADS="mg-az104-workloads"
-export GROUP_OBJECT_ID="<entra-group-object-id>"   # az104-rbac-readers
+SUB_ID="<subscription-id>"
+RG_NAME="rg-az104-network-dev-eastus2-01"
+LOCATION="eastus2"
+VNET_HUB="vnet-az104-hub-dev-eus2-01"
+VNET_SPOKE="vnet-az104-spoke-dev-eus2-01"
+ROUTE_TABLE="rt-az104-spoke-dev-eus2-01"
 ```
 
-### PowerShell
+PowerShell:
+
 ```powershell
-$SUBSCRIPTION_ID="<your-subscription-id>"
-$MG_ROOT="mg-az104-root"
-$MG_WORKLOADS="mg-az104-workloads"
-$GROUP_OBJECT_ID="<entra-group-object-id>"
+$SubscriptionId = "<subscription-id>"
+$ResourceGroupName = "rg-az104-network-dev-eastus2-01"
+$Location = "eastus2"
+$VnetHub = "vnet-az104-hub-dev-eus2-01"
+$VnetSpoke = "vnet-az104-spoke-dev-eus2-01"
+$RouteTableName = "rt-az104-spoke-dev-eus2-01"
 ```
 
----
+## Task 1 - Create VNets and subnets
 
-## Task 1 — Create the MG hierarchy (Portal + CLI + PowerShell)
-Follow module `M02` portal steps. If denied, record the error and proceed to verification tasks.
+Azure CLI:
 
----
-
-## Task 2 — Move the subscription to `mg-az104-workloads`
-
-### Portal
-Management groups → `mg-az104-workloads` → **Add subscription** → select subscription → **Save**.
-
-### Azure CLI
 ```bash
-az login
-az account set --subscription "$SUBSCRIPTION_ID"
-az account management-group subscription add --name "$MG_WORKLOADS" --subscription "$SUBSCRIPTION_ID"
+az account set --subscription "$SUB_ID"
+az group create --name "$RG_NAME" --location "$LOCATION"
+
+az network vnet create -g "$RG_NAME" -n "$VNET_HUB" --address-prefix 10.10.0.0/16 --subnet-name snet-hub-core --subnet-prefix 10.10.0.0/24
+az network vnet create -g "$RG_NAME" -n "$VNET_SPOKE" --address-prefix 10.20.0.0/16 --subnet-name snet-spoke-app --subnet-prefix 10.20.1.0/24
 ```
 
-### PowerShell
-```powershell
-Connect-AzAccount
-Set-AzContext -Subscription $SUBSCRIPTION_ID
-New-AzManagementGroupSubscription -GroupName $MG_WORKLOADS -SubscriptionId $SUBSCRIPTION_ID
-```
+## Task 2 - Configure peering
 
----
+Azure CLI:
 
-## Task 3 — Assign Reader to `az104-rbac-readers` at MG scope
-
-### Azure CLI
 ```bash
-MG_SCOPE="/providers/Microsoft.Management/managementGroups/${MG_WORKLOADS}"
-
-az role assignment create   --assignee-object-id "$GROUP_OBJECT_ID"   --assignee-principal-type Group   --role "Reader"   --scope "$MG_SCOPE"   -o table
+az network vnet peering create -g "$RG_NAME" -n hub-to-spoke --vnet-name "$VNET_HUB" --remote-vnet "$VNET_SPOKE" --allow-vnet-access
+az network vnet peering create -g "$RG_NAME" -n spoke-to-hub --vnet-name "$VNET_SPOKE" --remote-vnet "$VNET_HUB" --allow-vnet-access
 ```
 
-### PowerShell
-```powershell
-$mgScope="/providers/Microsoft.Management/managementGroups/$MG_WORKLOADS"
-New-AzRoleAssignment -ObjectId $GROUP_OBJECT_ID -RoleDefinitionName "Reader" -Scope $mgScope | Out-Null
-```
+## Task 3 - Configure route table and associate subnet
 
----
+Azure CLI:
+
+```bash
+az network route-table create -g "$RG_NAME" -n "$ROUTE_TABLE" -l "$LOCATION"
+az network route-table route create \
+  -g "$RG_NAME" \
+  --route-table-name "$ROUTE_TABLE" \
+  -n to-hub-inspection \
+  --address-prefix 0.0.0.0/0 \
+  --next-hop-type VirtualAppliance \
+  --next-hop-ip-address 10.10.0.4
+
+az network vnet subnet update \
+  -g "$RG_NAME" \
+  --vnet-name "$VNET_SPOKE" \
+  -n snet-spoke-app \
+  --route-table "$ROUTE_TABLE"
+```
 
 ## Verify
-- `az role assignment list --scope "$MG_SCOPE" -o table`
-- `Get-AzRoleAssignment -Scope $mgScope | Where RoleDefinitionName -eq "Reader"`
 
----
+```bash
+az network vnet peering list -g "$RG_NAME" --vnet-name "$VNET_HUB" -o table
+az network route-table show -g "$RG_NAME" -n "$ROUTE_TABLE" --query "routes[].{name:name,nextHopType:nextHopType,addressPrefix:addressPrefix}" -o table
+```
 
 ## Validation
+
 ```powershell
-pwsh -File learning-paths/lp04-virtual-networks/modules/m02-management-groups-subs/validation/validate.ps1 `
-  -SubscriptionId $SUBSCRIPTION_ID `
-  -WorkloadsManagementGroupName $MG_WORKLOADS `
-  -GroupObjectId $GROUP_OBJECT_ID
+pwsh -File learning-paths/lp04-virtual-networks/modules/m02-connectivity-and-routing/validation/validate.ps1 -SubscriptionId $SubscriptionId -ResourceGroupName $ResourceGroupName -RouteTableName $RouteTableName
 ```

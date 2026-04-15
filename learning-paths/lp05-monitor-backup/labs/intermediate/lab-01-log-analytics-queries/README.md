@@ -1,157 +1,225 @@
-# Intermediate Lab 01 - Identity Operations Runbook
+# Intermediate Lab 01 - Log Analytics Operations Runbook
 
 ## Purpose
-This lab converts M01 foundations into operational identity work. You will perform group lifecycle, RBAC review, and access validation using repeatable commands and evidence artifacts.
+
+This lab converts M01 monitoring foundations into repeatable operational work. You will query a Log Analytics workspace with KQL, validate agent heartbeat coverage, and verify diagnostic settings using both CLI and PowerShell.
 
 ## Time Estimate
+
 - 60 to 90 minutes
 
 ## Prerequisites
+
 - Completed beginner Lab 01
 - Non-production subscription access
-- Role to assign RBAC (Owner or User Access Administrator)
+- Monitoring Contributor or Log Analytics Contributor role on target resource group
 - Azure CLI and PowerShell Az installed
+- At least one VM or resource emitting logs to the workspace
 
 ## Scenario
-The platform team needs an operations-ready access model for an application resource group. You must:
-1. Create and maintain an operations group
-2. Assign least-privilege RBAC at resource group scope
-3. Validate that allowed and denied actions match design intent
-4. Produce evidence for audit and handoff
+
+The platform team must demonstrate that the Log Analytics workspace can answer operational questions about infrastructure health. You must:
+
+1. Create and tag a monitoring resource group
+2. Create or validate a Log Analytics workspace
+3. Run heartbeat, performance, and event queries
+4. Validate diagnostic settings on a resource
+5. Produce evidence for audit and handoff
 
 ## Variables
-Use these values in all steps.
 
 ```bash
 SUB_ID="<subscription-id>"
 LOCATION="eastus2"
-RG_NAME="rg-az104-idops-dev-eastus2-01"
-OPS_GROUP_NAME="az104-idops-rg-contributors"
-READER_GROUP_NAME="az104-idops-rg-readers"
+RG_NAME="rg-az104-monops-dev-eastus2-01"
+WORKSPACE_NAME="law-az104-monops-dev-01"
 ```
 
 ```powershell
 $SubscriptionId = "<subscription-id>"
 $Location = "eastus2"
-$RgName = "rg-az104-idops-dev-eastus2-01"
-$OpsGroupName = "az104-idops-rg-contributors"
-$ReaderGroupName = "az104-idops-rg-readers"
+$RgName = "rg-az104-monops-dev-eastus2-01"
+$WorkspaceName = "law-az104-monops-dev-01"
 ```
 
 ## Task 1 - Set Context and Create Baseline Resource Group
 
 ### Azure CLI
+
 ```bash
 az account set --subscription "$SUB_ID"
 
 az group create \
-	--name "$RG_NAME" \
-	--location "$LOCATION" \
-	--tags Owner="student" CostCenter="IT-104" Environment="dev" Workload="identity-ops" DataClass="internal" ExpirationDate="2026-12-31"
+  --name "$RG_NAME" \
+  --location "$LOCATION" \
+  --tags Owner="student" CostCenter="IT-104" Environment="dev" Workload="mon-ops" DataClass="internal" ExpirationDate="2026-12-31"
 ```
 
 ### PowerShell
+
 ```powershell
 Select-AzSubscription -SubscriptionId $SubscriptionId
 
-New-AzResourceGroup \
-	-Name $RgName \
-	-Location $Location \
-	-Tag @{
-		Owner = "student"
-		CostCenter = "IT-104"
-		Environment = "dev"
-		Workload = "identity-ops"
-		DataClass = "internal"
-		ExpirationDate = "2026-12-31"
-	}
+New-AzResourceGroup `
+  -Name $RgName `
+  -Location $Location `
+  -Tag @{
+    Owner          = "student"
+    CostCenter     = "IT-104"
+    Environment    = "dev"
+    Workload       = "mon-ops"
+    DataClass      = "internal"
+    ExpirationDate = "2026-12-31"
+  }
 ```
 
-## Task 2 - Create or Locate Entra Security Groups
+## Task 2 - Create or Validate the Log Analytics Workspace
 
 ### Azure CLI
-```bash
-az ad group create --display-name "$OPS_GROUP_NAME" --mail-nickname "$OPS_GROUP_NAME"
-az ad group create --display-name "$READER_GROUP_NAME" --mail-nickname "$READER_GROUP_NAME"
 
-OPS_GROUP_ID=$(az ad group show --group "$OPS_GROUP_NAME" --query id -o tsv)
-READER_GROUP_ID=$(az ad group show --group "$READER_GROUP_NAME" --query id -o tsv)
-echo "$OPS_GROUP_ID"
-echo "$READER_GROUP_ID"
+```bash
+az monitor log-analytics workspace create \
+  --resource-group "$RG_NAME" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --location "$LOCATION" \
+  --sku PerGB2018 \
+  --retention-time 30
+
+az monitor log-analytics workspace show \
+  --resource-group "$RG_NAME" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --query "{name:name,sku:sku.name,retentionDays:retentionInDays,status:publicNetworkAccessForIngestion}" -o table
 ```
 
 ### PowerShell
+
 ```powershell
-$opsGroup = Get-AzADGroup -DisplayName $OpsGroupName -ErrorAction SilentlyContinue
-if (-not $opsGroup) { $opsGroup = New-AzADGroup -DisplayName $OpsGroupName -MailNickname $OpsGroupName }
+$workspace = New-AzOperationalInsightsWorkspace `
+  -ResourceGroupName $RgName `
+  -Name $WorkspaceName `
+  -Location $Location `
+  -Sku PerGB2018 `
+  -RetentionInDays 30
 
-$readerGroup = Get-AzADGroup -DisplayName $ReaderGroupName -ErrorAction SilentlyContinue
-if (-not $readerGroup) { $readerGroup = New-AzADGroup -DisplayName $ReaderGroupName -MailNickname $ReaderGroupName }
-
-$opsGroup.Id
-$readerGroup.Id
+$workspace | Select-Object Name, Sku, RetentionInDays, PublicNetworkAccessForIngestion
 ```
 
-## Task 3 - Assign RBAC at Resource Group Scope
+## Task 3 - Run Heartbeat and Performance KQL Queries
+
+Use the workspace customer ID to run queries via the REST-backed CLI.
 
 ### Azure CLI
-```bash
-RG_SCOPE=$(az group show --name "$RG_NAME" --query id -o tsv)
 
-az role assignment create --assignee-object-id "$OPS_GROUP_ID" --assignee-principal-type Group --role Contributor --scope "$RG_SCOPE"
-az role assignment create --assignee-object-id "$READER_GROUP_ID" --assignee-principal-type Group --role Reader --scope "$RG_SCOPE"
+```bash
+WORKSPACE_ID=$(az monitor log-analytics workspace show \
+  --resource-group "$RG_NAME" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --query customerId -o tsv)
+
+# Heartbeat: agents that reported in the last hour
+az monitor log-analytics query \
+  --workspace "$WORKSPACE_ID" \
+  --analytics-query "Heartbeat | where TimeGenerated > ago(1h) | summarize LastSeen=max(TimeGenerated) by Computer, OSType | order by LastSeen desc" \
+  -o table
+
+# CPU performance: average CPU per computer over last hour
+az monitor log-analytics query \
+  --workspace "$WORKSPACE_ID" \
+  --analytics-query "Perf | where TimeGenerated > ago(1h) and ObjectName == 'Processor' and CounterName == '% Processor Time' | summarize AvgCPU=avg(CounterValue) by Computer | order by AvgCPU desc" \
+  -o table
 ```
 
 ### PowerShell
+
 ```powershell
-$rgScope = (Get-AzResourceGroup -Name $RgName).ResourceId
+$workspaceId = (Get-AzOperationalInsightsWorkspace `
+  -ResourceGroupName $RgName -Name $WorkspaceName).CustomerId.ToString()
 
-New-AzRoleAssignment -ObjectId $opsGroup.Id -RoleDefinitionName Contributor -Scope $rgScope
-New-AzRoleAssignment -ObjectId $readerGroup.Id -RoleDefinitionName Reader -Scope $rgScope
+# Heartbeat query
+$heartbeatQuery = "Heartbeat | where TimeGenerated > ago(1h) | summarize LastSeen=max(TimeGenerated) by Computer, OSType | order by LastSeen desc"
+Invoke-AzOperationalInsightsQuery -WorkspaceId $workspaceId -Query $heartbeatQuery |
+  Select-Object -ExpandProperty Results
+
+# CPU performance query
+$cpuQuery = "Perf | where TimeGenerated > ago(1h) and ObjectName == 'Processor' and CounterName == '% Processor Time' | summarize AvgCPU=avg(CounterValue) by Computer | order by AvgCPU desc"
+Invoke-AzOperationalInsightsQuery -WorkspaceId $workspaceId -Query $cpuQuery |
+  Select-Object -ExpandProperty Results
 ```
 
-## Task 4 - Validate Effective Access
+## Task 4 - Validate Diagnostic Settings on a Resource
 
-1. List role assignments at RG scope.
-2. Confirm there are no subscription-scope Owner assignments for these groups.
-3. Document one allowed action and one denied action for each role profile.
+Pick any resource in the subscription (e.g. a storage account or key vault) and confirm that its diagnostic settings point to your workspace.
 
-### Azure CLI checks
+### Azure CLI
+
 ```bash
-az role assignment list --scope "$RG_SCOPE" --query "[].{principal:principalName,role:roleDefinitionName,scope:scope}" -o table
+RESOURCE_ID=$(az storage account list \
+  --resource-group "$RG_NAME" \
+  --query "[0].id" -o tsv)
 
-az role assignment list --scope "/subscriptions/$SUB_ID" \
-	--query "[?contains(principalName, '$OPS_GROUP_NAME') || contains(principalName, '$READER_GROUP_NAME')].[principalName,roleDefinitionName,scope]" -o table
+az monitor diagnostic-settings list \
+  --resource "$RESOURCE_ID" \
+  --query "[].{name:name,workspace:workspaceId}" -o table
 ```
 
-### Suggested allowed and denied tests
-- Contributor group member: can create storage account in target RG
-- Reader group member: cannot create storage account in target RG
+If no diagnostic setting exists, create one:
+
+```bash
+az monitor diagnostic-settings create \
+  --name "diag-to-law" \
+  --resource "$RESOURCE_ID" \
+  --workspace "$WORKSPACE_NAME" \
+  --resource-group "$RG_NAME" \
+  --logs '[{"category":"StorageRead","enabled":true},{"category":"StorageWrite","enabled":true}]' \
+  --metrics '[{"category":"Transaction","enabled":true}]'
+```
+
+### PowerShell
+
+```powershell
+$resource = Get-AzStorageAccount -ResourceGroupName $RgName | Select-Object -First 1
+$workspaceResourceId = (Get-AzOperationalInsightsWorkspace `
+  -ResourceGroupName $RgName -Name $WorkspaceName).ResourceId
+
+Get-AzDiagnosticSetting -ResourceId $resource.Id |
+  Select-Object Name, @{N="Workspace";E={$_.WorkspaceId}}
+```
 
 ## Task 5 - Produce Evidence Package
+
 Create these files in your branch under this lab folder:
-- evidence-rg.json: output of resource group show
-- evidence-rbac-table.txt: role assignment output
-- evidence-access-tests.md: allowed and denied behavior with timestamps
-- root-cause-and-prevention.md: short ops note on why RG-scope assignment is safer than subscription-scope assignment
+
+- `evidence-workspace.json` — output of `az monitor log-analytics workspace show`
+- `evidence-heartbeat.txt` — heartbeat query results
+- `evidence-cpu-perf.txt` — CPU performance query results
+- `evidence-diag-settings.txt` — diagnostic settings list for chosen resource
+- `ops-notes.md` — short note on:
+  - What retention period was chosen and why
+  - Which resource was validated for diagnostic settings
+  - Whether any agent was absent from heartbeat and what the next step would be
 
 ## Acceptance Criteria
+
 - Resource group exists with required tags
-- Two groups exist and are role-assigned at RG scope
-- Role assignments are visible via CLI and PowerShell
-- Allowed and denied action tests are documented
+- Log Analytics workspace exists with PerGB2018 SKU and 30-day retention
+- Heartbeat query runs without error (empty result is acceptable if no agents present)
+- CPU performance query runs without error
+- At least one diagnostic setting is configured and visible
 - Evidence files are complete and readable
 
 ## Troubleshooting
 
-### Group creation fails
-- Cause: insufficient Entra permissions
-- Fix: ask instructor to pre-create groups and provide Object IDs
+### Query returns empty results
 
-### Role assignment fails with authorization error
-- Cause: account lacks Owner or User Access Administrator at target scope
-- Fix: request temporary elevation or instructor-assisted assignment
+- Cause: no agents have connected to the workspace or data has not yet arrived
+- Fix: wait 5 to 10 minutes after connecting an agent; verify agent health in the Azure portal Monitor blade
 
-### Role assignment appears delayed
-- Cause: RBAC propagation delay
-- Fix: wait 5 to 10 minutes and retry query
+### `az monitor log-analytics query` fails with permission error
+
+- Cause: identity lacks the Log Analytics Reader role on the workspace
+- Fix: run `az role assignment create --role "Log Analytics Reader" --scope <workspace-id> --assignee <upn>`
+
+### Diagnostic settings create fails with resource type error
+
+- Cause: not all resource types support all log categories
+- Fix: run `az monitor diagnostic-settings categories list --resource "$RESOURCE_ID"` to see supported categories before creating

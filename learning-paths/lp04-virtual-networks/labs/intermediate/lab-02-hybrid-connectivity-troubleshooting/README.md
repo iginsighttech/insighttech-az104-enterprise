@@ -1,154 +1,78 @@
-# Intermediate Lab 02 — Inheritance & Scope Troubleshooting (RBAC + Policy)
+# Intermediate Lab 02 - Hybrid Connectivity Troubleshooting
 
 ## Time Estimate
 - 75 to 105 minutes
 
-## Prerequisites
-- M01 and M02 completed
-- Access to at least one management group and one subscription
-- Ability to read RBAC and policy assignments
-
 ## Scenario
-A team reports:
-- They can read resources in one resource group but not another.
-- A “required tag” policy blocks creation in some places but not others.
+Users in a branch network cannot consistently reach workloads in a spoke subnet. Some connections succeed, but packet loss and timeout events occur during peak periods.
 
-Your job:
-1. Identify correct scope(s)
-2. Enumerate RBAC assignments and inheritance
-3. Validate policy assignments and effects
-4. Produce evidence using CLI + PowerShell
-5. Document the fix and rollback plan
+Investigate potential causes across:
+- VPN gateway/BGP route propagation,
+- route table and next-hop design,
+- NSG rules on spoke subnet,
+- DNS resolution path for target services.
 
 ## Variables
 
 ```bash
 SUB_ID="<subscription-id>"
-RG_A="rg-az104-inherit-a-dev-eastus2-01"
-RG_B="rg-az104-inherit-b-dev-eastus2-01"
-MG_ID="<management-group-id>"
+RG_NAME="rg-az104-network-dev-eastus2-01"
+CONNECTION_NAME="conn-branch-to-hub"
+GW_NAME="vpngw-az104-hub-dev-01"
 ```
 
-```powershell
-$SubscriptionId = "<subscription-id>"
-$RgA = "rg-az104-inherit-a-dev-eastus2-01"
-$RgB = "rg-az104-inherit-b-dev-eastus2-01"
-$ManagementGroupId = "<management-group-id>"
-```
+## Step 1 - Gather current-state evidence
 
-## Step 1 - Collect Current State
-
-### Azure CLI
 ```bash
 az account set --subscription "$SUB_ID"
-
-az role assignment list --scope "/subscriptions/$SUB_ID" -o json > evidence-rbac-subscription.json
-az role assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_A" -o json > evidence-rbac-rga.json
-az role assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_B" -o json > evidence-rbac-rgb.json
-
-az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/$MG_ID" -o json > evidence-policy-mg.json
-az policy assignment list --scope "/subscriptions/$SUB_ID" -o json > evidence-policy-subscription.json
-az policy assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_A" -o json > evidence-policy-rga.json
-az policy assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_B" -o json > evidence-policy-rgb.json
+az network vpn-connection show -g "$RG_NAME" -n "$CONNECTION_NAME" -o json > evidence-vpn-connection.json
+az network vnet-gateway show -g "$RG_NAME" -n "$GW_NAME" -o json > evidence-vpngw.json
+az network route-table list -g "$RG_NAME" -o json > evidence-route-tables.json
+az network nsg list -g "$RG_NAME" -o json > evidence-nsgs.json
 ```
 
-### PowerShell
-```powershell
-Select-AzSubscription -SubscriptionId $SubscriptionId
+## Step 2 - Validate data path
 
-Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-subscription-pwsh.json
-Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId/resourceGroups/$RgA" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-rga-pwsh.json
-Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId/resourceGroups/$RgB" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-rgb-pwsh.json
-
-Get-AzPolicyAssignment -Scope "/providers/Microsoft.Management/managementGroups/$ManagementGroupId" | ConvertTo-Json -Depth 8 | Out-File evidence-policy-mg-pwsh.json
-Get-AzPolicyAssignment -Scope "/subscriptions/$SubscriptionId" | ConvertTo-Json -Depth 8 | Out-File evidence-policy-subscription-pwsh.json
-```
-
-## Step 2 - Compare Effective RBAC Across Scopes
-
-1. Identify principal differences between RG_A and RG_B.
-2. Confirm if missing access is due to:
-   - No role assignment at inherited scope
-   - Explicit narrower assignment in one RG only
-   - Wrong principal object
-3. Capture your findings in a table.
-
-Template:
-
-| Principal | Expected Role | Expected Scope | Actual Scope | Gap | Fix |
-|---|---|---|---|---|---|
-| team-ops | Reader | Subscription | RG_A only | Missing inheritance to RG_B | add assignment at subscription |
-
-## Step 3 - Compare Effective Policy Behavior
-
-1. Confirm where required-tag policy is assigned.
-2. Check if exemptions exist for one RG but not the other.
-3. Verify policy effect (Audit, Deny, Modify).
-
-CLI helper:
+1. Run connection troubleshooting from source to spoke endpoint.
+2. Record latency and failure points.
 
 ```bash
-az policy exemption list --scope "/subscriptions/$SUB_ID" -o table
-az policy state summarize --management-group "$MG_ID" -o json > evidence-policy-summary-mg.json
-az policy state summarize --subscription "$SUB_ID" -o json > evidence-policy-summary-subscription.json
+az network watcher test-connectivity \
+  --source-resource "<source-resource-id>" \
+  --dest-address "<spoke-workload-ip-or-fqdn>" \
+  --dest-port 443 \
+  --output json > evidence-connectivity-before.json
 ```
 
-## Step 4 - Implement and Verify Fix
+## Step 3 - Implement minimum fix
 
-Apply only the minimum change required:
-- RBAC fix example: add missing Reader assignment at subscription scope
-- Policy fix example: align assignment scope, remove incorrect exemption, or use targeted exemption with expiration
+Apply the least invasive correction, such as:
+- add missing return route,
+- adjust NSG allow rule for approved branch CIDR,
+- repair BGP propagation setting on route table.
 
-CLI RBAC example:
+Example route-table update:
 
 ```bash
-PRINCIPAL_ID="<object-id>"
-az role assignment create \
-  --assignee-object-id "$PRINCIPAL_ID" \
-  --assignee-principal-type Group \
-  --role Reader \
-  --scope "/subscriptions/$SUB_ID"
+az network route-table route create \
+  --resource-group "$RG_NAME" \
+  --route-table-name "rt-spoke-app" \
+  --name "branch-return" \
+  --address-prefix "10.50.0.0/16" \
+  --next-hop-type VirtualNetworkGateway
 ```
 
-Policy exemption example:
+## Step 4 - Re-test and document
 
-```bash
-az policy exemption create \
-  --name "ex-rga-temporary-tag" \
-  --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_A" \
-  --policy-assignment "<policy-assignment-id>" \
-  --exemption-category Waiver \
-  --expires-on "2026-12-31T23:59:00Z" \
-  --display-name "Temporary waiver for migration"
-```
-
-Re-run evidence commands from Step 1 after fix.
-
-## Step 5 - Root Cause and Rollback
-Create root-cause-summary.md with:
-1. What was wrong
-2. Why it happened
-3. Fix applied
-4. Rollback command(s)
-5. Prevention control (review cadence, policy guardrail, RBAC standards)
-
-## Required Deliverables
-- Completed troubleshooting checklist using playbooks:
-  - `docs/program/playbooks/rbac-scope-troubleshooting.md`
-  - `docs/program/playbooks/policy-compliance-troubleshooting.md`
-- Evidence:
-  - RBAC role assignment listings at relevant scopes
-  - Policy assignment listings at relevant scopes
-- Root-cause summary:
-  - What was wrong
-  - Why it happened
-  - Fix + rollback
-  - Prevention
+Produce:
+- `evidence-connectivity-after.json`
+- `root-cause-summary.md`
+- `rollback-plan.md`
+- `network-change-log.md`
 
 ## Acceptance Criteria
-- Evidence files captured for before and after states
-- Root cause is specific and testable
-- Fix minimizes blast radius
-- Rollback is executable
-- Prevention guidance is documented
+- Evidence proves cause and fix.
+- Fix preserves least privilege and controlled routing.
+- Rollback is complete and executable.
+- Reviewer can reproduce the troubleshooting sequence.
 

@@ -1,24 +1,26 @@
-# Advanced Lab 02 — Least Privilege Design Challenge (RBAC)
+# Advanced Lab 02 - Observability Least-Privilege Design
 
 ## Difficulty
+
 - Advanced
 
 ## Time Estimate
+
 - 90 to 120 minutes
 
 ## Scenario
-Design RBAC for a new application team.
 
-### Requirements
-- Deploy resources only into: `rg-az104-app-dev-eastus2-01`
-- View resources across the subscription
-- A small subset can assign roles (only within that RG)
-- No subscription-scope Owner assignments
+An SRE team must maintain alert rules and backup visibility without receiving unrestricted access to production resources. Design a least-privilege model for monitoring and recovery operations.
 
 ## Objective
-Produce a least-privilege RBAC design that is operationally useful and auditable. You must prove that permissions are sufficient for required actions and blocked for non-required actions.
+
+1. Define observability personas and exact required actions.
+2. Implement minimum RBAC for monitoring and backup tasks.
+3. Validate both success and denial paths.
+4. Document rationale and rollback procedure.
 
 ## Required Deliverables
+
 - design-assumptions.md
 - role-scope-matrix.md
 - implementation-cli.txt
@@ -27,83 +29,62 @@ Produce a least-privilege RBAC design that is operationally useful and auditable
 - rationale.md
 - rollback.md
 
-## Step 1 - Capture Assumptions
-In design-assumptions.md include:
-1. Team personas (app-dev, app-lead, platform-auditor)
-2. Required actions per persona
-3. Non-required actions that must be denied
+## Step 1 - Identify personas
 
-## Step 2 - Build Role/Scope Matrix
-Create role-scope-matrix.md with this structure:
+Document:
 
-| Persona | Role | Scope | Why this role | Why not broader |
-|---|---|---|---|---|
-| app-dev | Contributor | app RG | deploy app resources | avoids cross-RG changes |
-| app-viewer | Reader | subscription | read visibility | no write actions |
-| app-lead | User Access Administrator | app RG | delegate within RG only | avoids tenant-wide RBAC risk |
+1. alert-operator (manage metric alerts and action groups).
+2. backup-operator (monitor backup jobs and recovery points).
+3. observability-auditor (read-only compliance checks).
+4. Disallowed actions (resource deletion, subscription policy changes, owner delegation).
 
-## Step 3 - Implement Assignments
+## Step 2 - Map roles to scopes
 
-CLI examples:
+Use scopes:
 
-```bash
-SUB_ID="<subscription-id>"
-APP_RG_SCOPE="/subscriptions/$SUB_ID/resourceGroups/rg-az104-app-dev-eastus2-01"
+- Resource group: rg-az104-monitor-dev-eastus2-01
+- Recovery Services vault: rsv-az104-ops-dev-01
 
-az role assignment create --assignee-object-id "<app-dev-group-id>" --assignee-principal-type Group --role Contributor --scope "$APP_RG_SCOPE"
-az role assignment create --assignee-object-id "<app-viewer-group-id>" --assignee-principal-type Group --role Reader --scope "/subscriptions/$SUB_ID"
-az role assignment create --assignee-object-id "<app-lead-group-id>" --assignee-principal-type Group --role "User Access Administrator" --scope "$APP_RG_SCOPE"
-```
+Suggested matrix:
 
-PowerShell examples:
+- alert-operator: Monitoring Contributor at monitor RG scope.
+- backup-operator: Backup Contributor at vault scope.
+- observability-auditor: Reader at subscription scope.
 
-```powershell
-$SubId = "<subscription-id>"
-$AppRgScope = "/subscriptions/$SubId/resourceGroups/rg-az104-app-dev-eastus2-01"
-
-New-AzRoleAssignment -ObjectId "<app-dev-group-id>" -RoleDefinitionName Contributor -Scope $AppRgScope
-New-AzRoleAssignment -ObjectId "<app-viewer-group-id>" -RoleDefinitionName Reader -Scope "/subscriptions/$SubId"
-New-AzRoleAssignment -ObjectId "<app-lead-group-id>" -RoleDefinitionName "User Access Administrator" -Scope $AppRgScope
-```
-
-## Step 4 - Validate Required and Blocked Actions
-Complete this table in validation-allowed-denied.md:
-
-| Persona | Test action | Expected | Actual | Evidence |
-|---|---|---|---|---|
-| app-dev | create storage in app RG | allow | allow | cli output |
-| app-dev | create role assignment at subscription | deny | deny | error output |
-| app-viewer | read resource inventory | allow | allow | cli output |
-| app-viewer | delete resource in app RG | deny | deny | error output |
-| app-lead | assign Reader in app RG | allow | allow | cli output |
-| app-lead | assign Owner at subscription | deny | deny | error output |
-
-## Step 5 - Write Design Rationale
-In rationale.md explain:
-1. Why each role was selected
-2. Why each scope was selected
-3. Blast radius implications if scope were broader
-4. Operational trade-offs and residual risks
-
-## Step 6 - Add Rollback Plan
-In rollback.md include exact role-assignment delete commands for each assignment.
+## Step 3 - Implement assignments
 
 CLI example:
 
 ```bash
-az role assignment delete --assignee-object-id "<app-dev-group-id>" --role Contributor --scope "$APP_RG_SCOPE"
+SUB_ID="<subscription-id>"
+RG_SCOPE="/subscriptions/$SUB_ID/resourceGroups/rg-az104-monitor-dev-eastus2-01"
+VAULT_SCOPE="$RG_SCOPE/providers/Microsoft.RecoveryServices/vaults/rsv-az104-ops-dev-01"
+
+az role assignment create --assignee-object-id "<alert-ops-group-id>" --assignee-principal-type Group --role "Monitoring Contributor" --scope "$RG_SCOPE"
+az role assignment create --assignee-object-id "<backup-ops-group-id>" --assignee-principal-type Group --role "Backup Contributor" --scope "$VAULT_SCOPE"
+az role assignment create --assignee-object-id "<observability-auditor-group-id>" --assignee-principal-type Group --role Reader --scope "/subscriptions/$SUB_ID"
 ```
 
+## Step 4 - Validate expected outcomes
+
+Record tests:
+
+- Allow: alert-operator updates CPU alert threshold.
+- Deny: alert-operator deletes VM resource.
+- Allow: backup-operator lists recovery points and starts restore test.
+- Deny: backup-operator modifies NSG in another RG.
+- Allow: observability-auditor reads backup reports.
+- Deny: observability-auditor changes action group webhook.
+
+## Step 5 - Rationale and rollback
+
+In rationale.md explain why monitoring and backup responsibilities are split.
+
+In rollback.md provide delete commands for all role assignments.
+
 ## Acceptance Criteria
-- No Owner created at subscription scope
-- Contributor limited to the app RG
-- Read-only access confirmed at broader scope
 
-## Scoring Guide (100 points)
-- 30: Least-privilege design quality
-- 25: Correct implementation
-- 25: Validation quality (allowed and denied tests)
-- 20: Rationale and rollback quality
-
-## Reviewer Notes
-A passing submission must be reproducible and auditable. Evidence should make it possible to verify design intent without direct access to the student environment.
+- Monitoring and backup write permissions are limited to required scopes.
+- Read-only auditing remains available without elevation.
+- Validation evidence includes blocked privilege-escalation attempts.
+- Design can be reviewed and replayed by another team.
