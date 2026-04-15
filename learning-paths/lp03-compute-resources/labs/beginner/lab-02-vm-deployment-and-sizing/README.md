@@ -1,80 +1,95 @@
-# Beginner Lab 02 — Management Groups & Subscriptions
+# Beginner Lab 02 - VM Deployment and Sizing
 
-**Goal:** Create (or validate) a management group hierarchy, move the subscription, and apply RBAC at MG scope.
+Goal: deploy a virtual machine scale set (VMSS), validate sizing, and configure basic autoscale behavior.
 
 ## Variables
 
-### Azure CLI
+Azure CLI:
+
 ```bash
-export SUBSCRIPTION_ID="<your-subscription-id>"
-export MG_ROOT="mg-az104-root"
-export MG_WORKLOADS="mg-az104-workloads"
-export GROUP_OBJECT_ID="<entra-group-object-id>"   # az104-rbac-readers
+SUB_ID="<subscription-id>"
+RG_NAME="rg-az104-compute-dev-eastus2-01"
+LOCATION="eastus2"
+VMSS_NAME="vmss-az104-web-dev-01"
+ADMIN_USER="azureadmin"
 ```
 
-### PowerShell
+PowerShell:
+
 ```powershell
-$SUBSCRIPTION_ID="<your-subscription-id>"
-$MG_ROOT="mg-az104-root"
-$MG_WORKLOADS="mg-az104-workloads"
-$GROUP_OBJECT_ID="<entra-group-object-id>"
+$SubscriptionId = "<subscription-id>"
+$ResourceGroupName = "rg-az104-compute-dev-eastus2-01"
+$Location = "eastus2"
+$VmssName = "vmss-az104-web-dev-01"
+$AdminUser = "azureadmin"
 ```
 
----
+## Task 1 - Create resource group and VMSS
 
-## Task 1 — Create the MG hierarchy (Portal + CLI + PowerShell)
-Follow module `M02` portal steps. If denied, record the error and proceed to verification tasks.
+Azure CLI:
 
----
-
-## Task 2 — Move the subscription to `mg-az104-workloads`
-
-### Portal
-Management groups → `mg-az104-workloads` → **Add subscription** → select subscription → **Save**.
-
-### Azure CLI
 ```bash
-az login
-az account set --subscription "$SUBSCRIPTION_ID"
-az account management-group subscription add --name "$MG_WORKLOADS" --subscription "$SUBSCRIPTION_ID"
+az account set --subscription "$SUB_ID"
+az group create --name "$RG_NAME" --location "$LOCATION"
+
+az vmss create \
+  --resource-group "$RG_NAME" \
+  --name "$VMSS_NAME" \
+  --image Ubuntu2204 \
+  --instance-count 2 \
+  --admin-username "$ADMIN_USER" \
+  --generate-ssh-keys \
+  --upgrade-policy-mode automatic
 ```
 
-### PowerShell
-```powershell
-Connect-AzAccount
-Set-AzContext -Subscription $SUBSCRIPTION_ID
-New-AzManagementGroupSubscription -GroupName $MG_WORKLOADS -SubscriptionId $SUBSCRIPTION_ID
-```
+## Task 2 - Configure autoscale rules
 
----
+Azure CLI:
 
-## Task 3 — Assign Reader to `az104-rbac-readers` at MG scope
-
-### Azure CLI
 ```bash
-MG_SCOPE="/providers/Microsoft.Management/managementGroups/${MG_WORKLOADS}"
+VMSS_ID=$(az vmss show -g "$RG_NAME" -n "$VMSS_NAME" --query id -o tsv)
 
-az role assignment create   --assignee-object-id "$GROUP_OBJECT_ID"   --assignee-principal-type Group   --role "Reader"   --scope "$MG_SCOPE"   -o table
+az monitor autoscale create \
+  --resource-group "$RG_NAME" \
+  --resource "$VMSS_NAME" \
+  --resource-type Microsoft.Compute/virtualMachineScaleSets \
+  --name "autoscale-$VMSS_NAME" \
+  --min-count 2 \
+  --max-count 4 \
+  --count 2
+
+az monitor autoscale rule create \
+  --resource-group "$RG_NAME" \
+  --autoscale-name "autoscale-$VMSS_NAME" \
+  --condition "Percentage CPU > 70 avg 5m" \
+  --scale out 1
+
+az monitor autoscale rule create \
+  --resource-group "$RG_NAME" \
+  --autoscale-name "autoscale-$VMSS_NAME" \
+  --condition "Percentage CPU < 30 avg 10m" \
+  --scale in 1
 ```
 
-### PowerShell
+PowerShell verification:
+
 ```powershell
-$mgScope="/providers/Microsoft.Management/managementGroups/$MG_WORKLOADS"
-New-AzRoleAssignment -ObjectId $GROUP_OBJECT_ID -RoleDefinitionName "Reader" -Scope $mgScope | Out-Null
+Select-AzSubscription -SubscriptionId $SubscriptionId
+Get-AzVmss -ResourceGroupName $ResourceGroupName -VMScaleSetName $VmssName | Select-Object Name, Location
 ```
-
----
 
 ## Verify
-- `az role assignment list --scope "$MG_SCOPE" -o table`
-- `Get-AzRoleAssignment -Scope $mgScope | Where RoleDefinitionName -eq "Reader"`
 
----
+- VMSS exists with at least 2 instances.
+- Autoscale settings are present.
+
+```bash
+az vmss show -g "$RG_NAME" -n "$VMSS_NAME" --query "{name:name,capacity:sku.capacity,tier:sku.tier,size:sku.name}" -o table
+az monitor autoscale list -g "$RG_NAME" -o table
+```
 
 ## Validation
+
 ```powershell
-pwsh -File learning-paths/lp03-compute-resources/modules/m02-management-groups-subs/validation/validate.ps1 `
-  -SubscriptionId $SUBSCRIPTION_ID `
-  -WorkloadsManagementGroupName $MG_WORKLOADS `
-  -GroupObjectId $GROUP_OBJECT_ID
+pwsh -File learning-paths/lp03-compute-resources/modules/m02-vm-scale-and-availability/validation/validate.ps1 -SubscriptionId $SubscriptionId -ResourceGroupName $ResourceGroupName -VmssName $VmssName
 ```

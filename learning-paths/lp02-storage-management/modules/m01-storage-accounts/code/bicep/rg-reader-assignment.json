@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "733867688184528022"
+    }
+  },
+  "parameters": {
+    "groupObjectId": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "readerRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, parameters('groupObjectId'), 'Reader')]",
+      "properties": {
+        "principalId": "[parameters('groupObjectId')]",
+        "roleDefinitionId": "[variables('readerRoleDefinitionId')]",
+        "principalType": "Group"
+      }
+    }
+  ],
+  "outputs": {
+    "roleAssignmentId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, parameters('groupObjectId'), 'Reader'))]"
+    }
+  }
+}

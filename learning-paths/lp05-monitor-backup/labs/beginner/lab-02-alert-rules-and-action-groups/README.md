@@ -1,80 +1,69 @@
-# Beginner Lab 02 — Management Groups & Subscriptions
+# Beginner Lab 02 - Alert Rules and Action Groups
 
-**Goal:** Create (or validate) a management group hierarchy, move the subscription, and apply RBAC at MG scope.
+Goal: configure a reusable action group and attach it to a metric alert so monitoring notifications are operational.
 
 ## Variables
 
 ### Azure CLI
 ```bash
-export SUBSCRIPTION_ID="<your-subscription-id>"
-export MG_ROOT="mg-az104-root"
-export MG_WORKLOADS="mg-az104-workloads"
-export GROUP_OBJECT_ID="<entra-group-object-id>"   # az104-rbac-readers
+SUB_ID="<subscription-id>"
+RG_NAME="rg-az104-monitor-dev-eastus2-01"
+LOCATION="eastus2"
+ACTION_GROUP_NAME="ag-az104-ops-dev-01"
+ALERT_RULE_NAME="cpu-high-vm-alert"
+TARGET_RESOURCE_ID="<vm-resource-id>"
+EMAIL_RECEIVER="ops-team@example.com"
 ```
 
 ### PowerShell
 ```powershell
-$SUBSCRIPTION_ID="<your-subscription-id>"
-$MG_ROOT="mg-az104-root"
-$MG_WORKLOADS="mg-az104-workloads"
-$GROUP_OBJECT_ID="<entra-group-object-id>"
+$SubscriptionId = "<subscription-id>"
+$ResourceGroupName = "rg-az104-monitor-dev-eastus2-01"
+$Location = "eastus2"
+$ActionGroupName = "ag-az104-ops-dev-01"
+$AlertRuleName = "cpu-high-vm-alert"
+$TargetResourceId = "<vm-resource-id>"
+$EmailReceiver = "ops-team@example.com"
 ```
 
----
+## Task 1 - Create resource group and action group
 
-## Task 1 — Create the MG hierarchy (Portal + CLI + PowerShell)
-Follow module `M02` portal steps. If denied, record the error and proceed to verification tasks.
-
----
-
-## Task 2 — Move the subscription to `mg-az104-workloads`
-
-### Portal
-Management groups → `mg-az104-workloads` → **Add subscription** → select subscription → **Save**.
-
-### Azure CLI
 ```bash
-az login
-az account set --subscription "$SUBSCRIPTION_ID"
-az account management-group subscription add --name "$MG_WORKLOADS" --subscription "$SUBSCRIPTION_ID"
+az account set --subscription "$SUB_ID"
+az group create --name "$RG_NAME" --location "$LOCATION"
+
+az monitor action-group create \
+  --name "$ACTION_GROUP_NAME" \
+  --resource-group "$RG_NAME" \
+  --short-name "azops" \
+  --action email ops "$EMAIL_RECEIVER"
 ```
 
-### PowerShell
-```powershell
-Connect-AzAccount
-Set-AzContext -Subscription $SUBSCRIPTION_ID
-New-AzManagementGroupSubscription -GroupName $MG_WORKLOADS -SubscriptionId $SUBSCRIPTION_ID
-```
+## Task 2 - Create metric alert rule
 
----
-
-## Task 3 — Assign Reader to `az104-rbac-readers` at MG scope
-
-### Azure CLI
 ```bash
-MG_SCOPE="/providers/Microsoft.Management/managementGroups/${MG_WORKLOADS}"
+ACTION_GROUP_ID=$(az monitor action-group show -g "$RG_NAME" -n "$ACTION_GROUP_NAME" --query id -o tsv)
 
-az role assignment create   --assignee-object-id "$GROUP_OBJECT_ID"   --assignee-principal-type Group   --role "Reader"   --scope "$MG_SCOPE"   -o table
+az monitor metrics alert create \
+  --name "$ALERT_RULE_NAME" \
+  --resource-group "$RG_NAME" \
+  --scopes "$TARGET_RESOURCE_ID" \
+  --condition "avg Percentage CPU > 80" \
+  --description "Alert when VM CPU is high" \
+  --evaluation-frequency 5m \
+  --window-size 15m \
+  --severity 2 \
+  --action "$ACTION_GROUP_ID"
 ```
 
-### PowerShell
-```powershell
-$mgScope="/providers/Microsoft.Management/managementGroups/$MG_WORKLOADS"
-New-AzRoleAssignment -ObjectId $GROUP_OBJECT_ID -RoleDefinitionName "Reader" -Scope $mgScope | Out-Null
+## Task 3 - Verify rule wiring
+
+```bash
+az monitor action-group show -g "$RG_NAME" -n "$ACTION_GROUP_NAME" -o table
+az monitor metrics alert show -g "$RG_NAME" -n "$ALERT_RULE_NAME" -o json
 ```
-
----
-
-## Verify
-- `az role assignment list --scope "$MG_SCOPE" -o table`
-- `Get-AzRoleAssignment -Scope $mgScope | Where RoleDefinitionName -eq "Reader"`
-
----
 
 ## Validation
 ```powershell
-pwsh -File learning-paths/lp05-monitor-backup/modules/m02-management-groups-subs/validation/validate.ps1 `
-  -SubscriptionId $SUBSCRIPTION_ID `
-  -WorkloadsManagementGroupName $MG_WORKLOADS `
-  -GroupObjectId $GROUP_OBJECT_ID
+pwsh -File learning-paths/lp05-monitor-backup/modules/m02-alerting-and-log-analytics/validation/validate.ps1 -SubscriptionId $SubscriptionId -ResourceGroupName $ResourceGroupName -ActionGroupName $ActionGroupName
 ```

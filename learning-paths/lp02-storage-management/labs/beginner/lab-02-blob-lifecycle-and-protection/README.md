@@ -1,80 +1,150 @@
-# Beginner Lab 02 — Management Groups & Subscriptions
+# Beginner Lab 02 - Blob Lifecycle and Protection
 
-**Goal:** Create (or validate) a management group hierarchy, move the subscription, and apply RBAC at MG scope.
+Goal: configure blob data protection and lifecycle controls for a storage account used by application teams.
 
 ## Variables
 
-### Azure CLI
+Azure CLI:
+
 ```bash
-export SUBSCRIPTION_ID="<your-subscription-id>"
-export MG_ROOT="mg-az104-root"
-export MG_WORKLOADS="mg-az104-workloads"
-export GROUP_OBJECT_ID="<entra-group-object-id>"   # az104-rbac-readers
+SUB_ID="<subscription-id>"
+RG_NAME="rg-az104-storage-dev-eastus2-01"
+LOCATION="eastus2"
+STORAGE_ACCOUNT="staz104blobdev01"
 ```
 
-### PowerShell
+PowerShell:
+
 ```powershell
-$SUBSCRIPTION_ID="<your-subscription-id>"
-$MG_ROOT="mg-az104-root"
-$MG_WORKLOADS="mg-az104-workloads"
-$GROUP_OBJECT_ID="<entra-group-object-id>"
+$SubscriptionId = "<subscription-id>"
+$ResourceGroupName = "rg-az104-storage-dev-eastus2-01"
+$Location = "eastus2"
+$StorageAccountName = "staz104blobdev01"
 ```
 
----
+## Task 1 - Create or validate storage baseline
 
-## Task 1 — Create the MG hierarchy (Portal + CLI + PowerShell)
-Follow module `M02` portal steps. If denied, record the error and proceed to verification tasks.
+Azure CLI:
 
----
-
-## Task 2 — Move the subscription to `mg-az104-workloads`
-
-### Portal
-Management groups → `mg-az104-workloads` → **Add subscription** → select subscription → **Save**.
-
-### Azure CLI
 ```bash
-az login
-az account set --subscription "$SUBSCRIPTION_ID"
-az account management-group subscription add --name "$MG_WORKLOADS" --subscription "$SUBSCRIPTION_ID"
+az account set --subscription "$SUB_ID"
+az group create --name "$RG_NAME" --location "$LOCATION"
+
+az storage account create \
+  --name "$STORAGE_ACCOUNT" \
+  --resource-group "$RG_NAME" \
+  --location "$LOCATION" \
+  --sku Standard_LRS \
+  --kind StorageV2
 ```
 
-### PowerShell
+PowerShell:
+
 ```powershell
-Connect-AzAccount
-Set-AzContext -Subscription $SUBSCRIPTION_ID
-New-AzManagementGroupSubscription -GroupName $MG_WORKLOADS -SubscriptionId $SUBSCRIPTION_ID
+Select-AzSubscription -SubscriptionId $SubscriptionId
+New-AzResourceGroup -Name $ResourceGroupName -Location $Location -Force | Out-Null
+
+New-AzStorageAccount \
+  -ResourceGroupName $ResourceGroupName \
+  -Name $StorageAccountName \
+  -Location $Location \
+  -SkuName Standard_LRS \
+  -Kind StorageV2 | Out-Null
 ```
 
----
+## Task 2 - Create required data containers
 
-## Task 3 — Assign Reader to `az104-rbac-readers` at MG scope
+Azure CLI:
 
-### Azure CLI
 ```bash
-MG_SCOPE="/providers/Microsoft.Management/managementGroups/${MG_WORKLOADS}"
-
-az role assignment create   --assignee-object-id "$GROUP_OBJECT_ID"   --assignee-principal-type Group   --role "Reader"   --scope "$MG_SCOPE"   -o table
+for c in raw curated archive; do
+  az storage container create \
+    --account-name "$STORAGE_ACCOUNT" \
+    --name "$c" \
+    --auth-mode login
+done
 ```
 
-### PowerShell
+  PowerShell:
+
 ```powershell
-$mgScope="/providers/Microsoft.Management/managementGroups/$MG_WORKLOADS"
-New-AzRoleAssignment -ObjectId $GROUP_OBJECT_ID -RoleDefinitionName "Reader" -Scope $mgScope | Out-Null
+$ctx = (Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName).Context
+"raw","curated","archive" | ForEach-Object {
+  New-AzStorageContainer -Name $_ -Context $ctx -ErrorAction SilentlyContinue | Out-Null
+}
 ```
 
----
+## Task 3 - Enable protection controls
+
+Azure CLI:
+
+```bash
+az storage account blob-service-properties update \
+  --account-name "$STORAGE_ACCOUNT" \
+  --resource-group "$RG_NAME" \
+  --enable-versioning true \
+  --enable-delete-retention true \
+  --delete-retention-days 14
+```
+
+PowerShell:
+
+```powershell
+Enable-AzStorageBlobDeleteRetentionPolicy \
+  -ResourceGroupName $ResourceGroupName \
+  -StorageAccountName $StorageAccountName \
+  -RetentionDays 14 | Out-Null
+```
+
+## Task 4 - Configure lifecycle policy
+
+Azure CLI:
+
+```bash
+cat > lifecycle-policy.json <<'JSON'
+{
+  "rules": [
+    {
+      "enabled": true,
+      "name": "tier-and-archive",
+      "type": "Lifecycle",
+      "definition": {
+        "filters": {
+          "blobTypes": ["blockBlob"],
+          "prefixMatch": ["raw/"]
+        },
+        "actions": {
+          "baseBlob": {
+            "tierToCool": {"daysAfterModificationGreaterThan": 30},
+            "tierToArchive": {"daysAfterModificationGreaterThan": 90}
+          }
+        }
+      }
+    }
+  ]
+}
+JSON
+
+az storage account management-policy create \
+  --account-name "$STORAGE_ACCOUNT" \
+  --resource-group "$RG_NAME" \
+  --policy @lifecycle-policy.json
+```
 
 ## Verify
-- `az role assignment list --scope "$MG_SCOPE" -o table`
-- `Get-AzRoleAssignment -Scope $mgScope | Where RoleDefinitionName -eq "Reader"`
 
----
+- Confirm versioning and delete retention are enabled.
+- Confirm containers `raw`, `curated`, and `archive` exist.
+- Confirm management policy exists.
+
+```bash
+az storage account blob-service-properties show --account-name "$STORAGE_ACCOUNT" --resource-group "$RG_NAME" -o table
+az storage container list --account-name "$STORAGE_ACCOUNT" --auth-mode login -o table
+az storage account management-policy show --account-name "$STORAGE_ACCOUNT" --resource-group "$RG_NAME"
+```
 
 ## Validation
+
 ```powershell
-pwsh -File learning-paths/lp02-storage-management/modules/m02-management-groups-subs/validation/validate.ps1 `
-  -SubscriptionId $SUBSCRIPTION_ID `
-  -WorkloadsManagementGroupName $MG_WORKLOADS `
-  -GroupObjectId $GROUP_OBJECT_ID
+pwsh -File learning-paths/lp02-storage-management/modules/m02-blob-services-data-protection/validation/validate.ps1 -SubscriptionId $SubscriptionId -ResourceGroupName $ResourceGroupName -StorageAccountName $StorageAccountName
 ```

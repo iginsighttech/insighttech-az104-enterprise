@@ -1,24 +1,26 @@
-# Advanced Lab 02 — Least Privilege Design Challenge (RBAC)
+# Advanced Lab 02 - Network Least-Privilege Design
 
 ## Difficulty
+
 - Advanced
 
 ## Time Estimate
+
 - 90 to 120 minutes
 
 ## Scenario
-Design RBAC for a new application team.
 
-### Requirements
-- Deploy resources only into: `rg-az104-app-dev-eastus2-01`
-- View resources across the subscription
-- A small subset can assign roles (only within that RG)
-- No subscription-scope Owner assignments
+A network team manages hub-and-spoke connectivity and security controls. Create a least-privilege role design that allows routing and NSG changes in approved scopes without granting platform-wide authority.
 
 ## Objective
-Produce a least-privilege RBAC design that is operationally useful and auditable. You must prove that permissions are sufficient for required actions and blocked for non-required actions.
+
+1. Model network personas with scoped privileges.
+2. Assign least-privilege roles for hub/spoke operations.
+3. Validate permitted and blocked tasks.
+4. Produce a clear security rationale and rollback path.
 
 ## Required Deliverables
+
 - design-assumptions.md
 - role-scope-matrix.md
 - implementation-cli.txt
@@ -27,83 +29,65 @@ Produce a least-privilege RBAC design that is operationally useful and auditable
 - rationale.md
 - rollback.md
 
-## Step 1 - Capture Assumptions
-In design-assumptions.md include:
-1. Team personas (app-dev, app-lead, platform-auditor)
-2. Required actions per persona
-3. Non-required actions that must be denied
+## Step 1 - Persona definition
 
-## Step 2 - Build Role/Scope Matrix
-Create role-scope-matrix.md with this structure:
+Document:
 
-| Persona | Role | Scope | Why this role | Why not broader |
-|---|---|---|---|---|
-| app-dev | Contributor | app RG | deploy app resources | avoids cross-RG changes |
-| app-viewer | Reader | subscription | read visibility | no write actions |
-| app-lead | User Access Administrator | app RG | delegate within RG only | avoids tenant-wide RBAC risk |
+1. network-operator (NSG and UDR changes in network RG).
+2. peering-operator (manage peering on specific VNets only).
+3. network-auditor (read-only across subscription).
+4. Denied operations (global policy updates, cross-subscription role assignment).
 
-## Step 3 - Implement Assignments
+## Step 2 - Role and scope matrix
 
-CLI examples:
+Use scopes:
 
-```bash
-SUB_ID="<subscription-id>"
-APP_RG_SCOPE="/subscriptions/$SUB_ID/resourceGroups/rg-az104-app-dev-eastus2-01"
+- Resource group: rg-az104-network-dev-eastus2-01
+- Hub VNet: vnet-az104-hub-dev-eus2-01
+- Spoke VNet: vnet-az104-spoke-dev-eus2-01
 
-az role assignment create --assignee-object-id "<app-dev-group-id>" --assignee-principal-type Group --role Contributor --scope "$APP_RG_SCOPE"
-az role assignment create --assignee-object-id "<app-viewer-group-id>" --assignee-principal-type Group --role Reader --scope "/subscriptions/$SUB_ID"
-az role assignment create --assignee-object-id "<app-lead-group-id>" --assignee-principal-type Group --role "User Access Administrator" --scope "$APP_RG_SCOPE"
-```
+Suggested assignments:
 
-PowerShell examples:
+- network-operator: Network Contributor at network RG scope.
+- peering-operator: Network Contributor at specific VNet scopes.
+- network-auditor: Reader at subscription scope.
 
-```powershell
-$SubId = "<subscription-id>"
-$AppRgScope = "/subscriptions/$SubId/resourceGroups/rg-az104-app-dev-eastus2-01"
-
-New-AzRoleAssignment -ObjectId "<app-dev-group-id>" -RoleDefinitionName Contributor -Scope $AppRgScope
-New-AzRoleAssignment -ObjectId "<app-viewer-group-id>" -RoleDefinitionName Reader -Scope "/subscriptions/$SubId"
-New-AzRoleAssignment -ObjectId "<app-lead-group-id>" -RoleDefinitionName "User Access Administrator" -Scope $AppRgScope
-```
-
-## Step 4 - Validate Required and Blocked Actions
-Complete this table in validation-allowed-denied.md:
-
-| Persona | Test action | Expected | Actual | Evidence |
-|---|---|---|---|---|
-| app-dev | create storage in app RG | allow | allow | cli output |
-| app-dev | create role assignment at subscription | deny | deny | error output |
-| app-viewer | read resource inventory | allow | allow | cli output |
-| app-viewer | delete resource in app RG | deny | deny | error output |
-| app-lead | assign Reader in app RG | allow | allow | cli output |
-| app-lead | assign Owner at subscription | deny | deny | error output |
-
-## Step 5 - Write Design Rationale
-In rationale.md explain:
-1. Why each role was selected
-2. Why each scope was selected
-3. Blast radius implications if scope were broader
-4. Operational trade-offs and residual risks
-
-## Step 6 - Add Rollback Plan
-In rollback.md include exact role-assignment delete commands for each assignment.
+## Step 3 - Implement assignments
 
 CLI example:
 
 ```bash
-az role assignment delete --assignee-object-id "<app-dev-group-id>" --role Contributor --scope "$APP_RG_SCOPE"
+SUB_ID="<subscription-id>"
+RG_SCOPE="/subscriptions/$SUB_ID/resourceGroups/rg-az104-network-dev-eastus2-01"
+HUB_SCOPE="$RG_SCOPE/providers/Microsoft.Network/virtualNetworks/vnet-az104-hub-dev-eus2-01"
+SPOKE_SCOPE="$RG_SCOPE/providers/Microsoft.Network/virtualNetworks/vnet-az104-spoke-dev-eus2-01"
+
+az role assignment create --assignee-object-id "<network-ops-group-id>" --assignee-principal-type Group --role "Network Contributor" --scope "$RG_SCOPE"
+az role assignment create --assignee-object-id "<peering-ops-group-id>" --assignee-principal-type Group --role "Network Contributor" --scope "$HUB_SCOPE"
+az role assignment create --assignee-object-id "<peering-ops-group-id>" --assignee-principal-type Group --role "Network Contributor" --scope "$SPOKE_SCOPE"
+az role assignment create --assignee-object-id "<network-auditor-group-id>" --assignee-principal-type Group --role Reader --scope "/subscriptions/$SUB_ID"
 ```
 
+## Step 4 - Validate controls
+
+Capture proof for:
+
+- Allow: network-operator adds NSG rule in target RG.
+- Deny: network-operator updates route table in non-approved RG.
+- Allow: peering-operator updates hub-to-spoke peering setting.
+- Deny: peering-operator edits NSG at RG scope.
+- Allow: network-auditor reads effective route table.
+- Deny: network-auditor creates peering.
+
+## Step 5 - Final documentation
+
+Summarize residual risk if Network Contributor were assigned at subscription scope.
+
+Provide rollback commands for each assignment.
+
 ## Acceptance Criteria
-- No Owner created at subscription scope
-- Contributor limited to the app RG
-- Read-only access confirmed at broader scope
 
-## Scoring Guide (100 points)
-- 30: Least-privilege design quality
-- 25: Correct implementation
-- 25: Validation quality (allowed and denied tests)
-- 20: Rationale and rollback quality
-
-## Reviewer Notes
-A passing submission must be reproducible and auditable. Evidence should make it possible to verify design intent without direct access to the student environment.
+- Network write operations are scoped to approved resources.
+- Read-only auditing remains broad without write permissions.
+- Denied tests prove protection boundaries.
+- Evidence is sufficient for peer review.

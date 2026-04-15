@@ -19,17 +19,13 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   tags: tags
 }
 
-var readerRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
-
-resource rgReaderAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(rg.id, groupObjectId, 'Reader')
+module rgReaderAssignment 'rg-reader-assignment.bicep' = {
+  name: 'assign-rg-reader'
   scope: rg
-  properties: {
-    principalId: groupObjectId
-    roleDefinitionId: readerRoleDefinitionId
-    principalType: 'Group'
+  params: {
+    groupObjectId: groupObjectId
   }
 }
 
 output resourceGroupId string = rg.id
-output roleAssignmentId string = rgReaderAssignment.id
+output roleAssignmentId string = rgReaderAssignment.outputs.roleAssignmentId

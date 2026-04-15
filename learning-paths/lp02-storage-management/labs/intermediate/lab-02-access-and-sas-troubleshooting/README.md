@@ -1,154 +1,92 @@
-# Intermediate Lab 02 — Inheritance & Scope Troubleshooting (RBAC + Policy)
+# Intermediate Lab 02 - Access and SAS Troubleshooting
 
 ## Time Estimate
 - 75 to 105 minutes
 
-## Prerequisites
-- M01 and M02 completed
-- Access to at least one management group and one subscription
-- Ability to read RBAC and policy assignments
-
 ## Scenario
-A team reports:
-- They can read resources in one resource group but not another.
-- A “required tag” policy blocks creation in some places but not others.
+An application team reports intermittent blob download failures. Some users can upload but cannot read blobs. Others can read only for a few minutes before access is denied.
 
-Your job:
-1. Identify correct scope(s)
-2. Enumerate RBAC assignments and inheritance
-3. Validate policy assignments and effects
-4. Produce evidence using CLI + PowerShell
-5. Document the fix and rollback plan
+Your job is to identify whether the issue is caused by:
+- incorrect RBAC data-plane role assignment,
+- invalid or expired SAS token,
+- container-level permission mismatch,
+- storage firewall/public network restrictions.
 
 ## Variables
 
 ```bash
 SUB_ID="<subscription-id>"
-RG_A="rg-az104-inherit-a-dev-eastus2-01"
-RG_B="rg-az104-inherit-b-dev-eastus2-01"
-MG_ID="<management-group-id>"
+RG_NAME="rg-az104-storage-dev-eastus2-01"
+STORAGE_ACCOUNT="staz104blobdev01"
+CONTAINER="raw"
 ```
 
 ```powershell
 $SubscriptionId = "<subscription-id>"
-$RgA = "rg-az104-inherit-a-dev-eastus2-01"
-$RgB = "rg-az104-inherit-b-dev-eastus2-01"
-$ManagementGroupId = "<management-group-id>"
+$ResourceGroupName = "rg-az104-storage-dev-eastus2-01"
+$StorageAccountName = "staz104blobdev01"
+$ContainerName = "raw"
 ```
 
-## Step 1 - Collect Current State
+## Step 1 - Collect baseline evidence
 
 ### Azure CLI
 ```bash
 az account set --subscription "$SUB_ID"
-
-az role assignment list --scope "/subscriptions/$SUB_ID" -o json > evidence-rbac-subscription.json
-az role assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_A" -o json > evidence-rbac-rga.json
-az role assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_B" -o json > evidence-rbac-rgb.json
-
-az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/$MG_ID" -o json > evidence-policy-mg.json
-az policy assignment list --scope "/subscriptions/$SUB_ID" -o json > evidence-policy-subscription.json
-az policy assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_A" -o json > evidence-policy-rga.json
-az policy assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_B" -o json > evidence-policy-rgb.json
+az storage account show -g "$RG_NAME" -n "$STORAGE_ACCOUNT" -o json > evidence-storage-account.json
+az role assignment list --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME" -o json > evidence-rbac-rg.json
+az storage container show --account-name "$STORAGE_ACCOUNT" --name "$CONTAINER" --auth-mode login -o json > evidence-container.json
 ```
 
 ### PowerShell
 ```powershell
 Select-AzSubscription -SubscriptionId $SubscriptionId
-
-Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-subscription-pwsh.json
-Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId/resourceGroups/$RgA" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-rga-pwsh.json
-Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId/resourceGroups/$RgB" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-rgb-pwsh.json
-
-Get-AzPolicyAssignment -Scope "/providers/Microsoft.Management/managementGroups/$ManagementGroupId" | ConvertTo-Json -Depth 8 | Out-File evidence-policy-mg-pwsh.json
-Get-AzPolicyAssignment -Scope "/subscriptions/$SubscriptionId" | ConvertTo-Json -Depth 8 | Out-File evidence-policy-subscription-pwsh.json
+Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName | ConvertTo-Json -Depth 8 | Out-File evidence-storage-account-pwsh.json
+Get-AzRoleAssignment -Scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName" | ConvertTo-Json -Depth 8 | Out-File evidence-rbac-rg-pwsh.json
 ```
 
-## Step 2 - Compare Effective RBAC Across Scopes
+## Step 2 - Reproduce deny and success paths
 
-1. Identify principal differences between RG_A and RG_B.
-2. Confirm if missing access is due to:
-   - No role assignment at inherited scope
-   - Explicit narrower assignment in one RG only
-   - Wrong principal object
-3. Capture your findings in a table.
-
-Template:
-
-| Principal | Expected Role | Expected Scope | Actual Scope | Gap | Fix |
-|---|---|---|---|---|---|
-| team-ops | Reader | Subscription | RG_A only | Missing inheritance to RG_B | add assignment at subscription |
-
-## Step 3 - Compare Effective Policy Behavior
-
-1. Confirm where required-tag policy is assigned.
-2. Check if exemptions exist for one RG but not the other.
-3. Verify policy effect (Audit, Deny, Modify).
-
-CLI helper:
+1. Generate a short-lived SAS token (5 minutes) and attempt read after expiration.
+2. Generate a corrected read SAS token (60 minutes) and validate download success.
+3. Record both outcomes in `validation-results.md`.
 
 ```bash
-az policy exemption list --scope "/subscriptions/$SUB_ID" -o table
-az policy state summarize --management-group "$MG_ID" -o json > evidence-policy-summary-mg.json
-az policy state summarize --subscription "$SUB_ID" -o json > evidence-policy-summary-subscription.json
+EXPIRY_SHORT=$(date -u -d '+5 minutes' '+%Y-%m-%dT%H:%MZ')
+EXPIRY_LONG=$(date -u -d '+60 minutes' '+%Y-%m-%dT%H:%MZ')
+
+SAS_SHORT=$(az storage container generate-sas --account-name "$STORAGE_ACCOUNT" --name "$CONTAINER" --permissions r --expiry "$EXPIRY_SHORT" --auth-mode login -o tsv)
+SAS_LONG=$(az storage container generate-sas --account-name "$STORAGE_ACCOUNT" --name "$CONTAINER" --permissions rl --expiry "$EXPIRY_LONG" --auth-mode login -o tsv)
 ```
 
-## Step 4 - Implement and Verify Fix
+## Step 3 - Implement minimum fix
 
-Apply only the minimum change required:
-- RBAC fix example: add missing Reader assignment at subscription scope
-- Policy fix example: align assignment scope, remove incorrect exemption, or use targeted exemption with expiration
+Choose the smallest corrective action based on findings:
+- assign missing `Storage Blob Data Reader` role at correct scope,
+- rotate to proper SAS permissions (`r` vs `rl` as needed),
+- adjust network access settings for approved source path only.
 
-CLI RBAC example:
+Example RBAC fix:
 
 ```bash
 PRINCIPAL_ID="<object-id>"
 az role assignment create \
   --assignee-object-id "$PRINCIPAL_ID" \
   --assignee-principal-type Group \
-  --role Reader \
-  --scope "/subscriptions/$SUB_ID"
+  --role "Storage Blob Data Reader" \
+  --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME/providers/Microsoft.Storage/storageAccounts/$STORAGE_ACCOUNT"
 ```
 
-Policy exemption example:
+## Step 4 - Re-validate and document rollback
 
-```bash
-az policy exemption create \
-  --name "ex-rga-temporary-tag" \
-  --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_A" \
-  --policy-assignment "<policy-assignment-id>" \
-  --exemption-category Waiver \
-  --expires-on "2026-12-31T23:59:00Z" \
-  --display-name "Temporary waiver for migration"
-```
-
-Re-run evidence commands from Step 1 after fix.
-
-## Step 5 - Root Cause and Rollback
-Create root-cause-summary.md with:
-1. What was wrong
-2. Why it happened
-3. Fix applied
-4. Rollback command(s)
-5. Prevention control (review cadence, policy guardrail, RBAC standards)
-
-## Required Deliverables
-- Completed troubleshooting checklist using playbooks:
-  - `docs/program/playbooks/rbac-scope-troubleshooting.md`
-  - `docs/program/playbooks/policy-compliance-troubleshooting.md`
-- Evidence:
-  - RBAC role assignment listings at relevant scopes
-  - Policy assignment listings at relevant scopes
-- Root-cause summary:
-  - What was wrong
-  - Why it happened
-  - Fix + rollback
-  - Prevention
+Produce:
+- `root-cause-summary.md`
+- `rollback-plan.md`
+- `validation-results.md` showing one denied test and one successful test after fix.
 
 ## Acceptance Criteria
-- Evidence files captured for before and after states
-- Root cause is specific and testable
-- Fix minimizes blast radius
-- Rollback is executable
-- Prevention guidance is documented
+- Root cause is specific (RBAC, SAS, or network).
+- Evidence captures before and after states.
+- Fix follows least privilege and minimal blast radius.
+- Rollback steps are executable.
 

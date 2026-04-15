@@ -1,7 +1,6 @@
 targetScope = 'subscription'
 
 param rgName string
-param location string = 'eastus2'
 
 var requireEnvTagPolicyName = 'require-env-tag-rg'
 var requireEnvAssignmentName = 'assign-require-env-tag-audit'
@@ -29,13 +28,13 @@ resource policyDef 'Microsoft.Authorization/policyDefinitions@2021-06-01' = {
           { field: 'type', equals: 'Microsoft.Resources/subscriptions/resourceGroups' }
           {
             anyOf: [
-              { field: "tags['Environment']", exists: 'false' }
-              { field: "tags['Environment']", equals: '' }
+              { field: 'tags["Environment"]', exists: false }
+              { field: 'tags["Environment"]', equals: '' }
             ]
           }
         ]
       }
-      then: { effect: "[parameters('effect')]" }
+      then: { effect: '[parameters("effect")]' }
     }
   }
 }
@@ -55,11 +54,11 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' existing = {
   name: rgName
 }
 
-resource rgLock 'Microsoft.Authorization/locks@2016-09-01' = {
-  name: 'lock-rg-cannotdelete'
+module rgLock 'rg-lock.bicep' = {
+  name: 'apply-rg-cannotdelete-lock'
   scope: rg
-  properties: {
-    level: 'CanNotDelete'
-    notes: 'AZ-104 lab: prevent accidental deletion'
+  params: {
+    lockName: 'lock-rg-cannotdelete'
+    lockNotes: 'AZ-104 lab: prevent accidental deletion'
   }
 }
