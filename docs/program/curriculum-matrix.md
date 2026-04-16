@@ -1,81 +1,61 @@
-# Curriculum Matrix — AZ-104 (Enterprise)
+# Curriculum Matrix — AZ-204 (Enterprise)
 
-## Domain 1: Manage Azure Identities & Governance (LP01)
-
-| Skills Measured Area | Module | Labs | Validation |
-|---|---|---|---|
-| Manage users/groups & RBAC | M01 | Beginner Lab-01 | `m01/.../validation/validate.ps1` |
-| Management groups & subscription org | M02 | Beginner Lab-02 + Intermediate Lab-02 | `m02/.../validation/validate.ps1` |
-| Azure Policy, Locks, Tags | M03 | Beginner Lab-03 + Intermediate Lab-04/05 | `m03/.../validation/validate.ps1` + tag report scripts |
-| Cost Mgmt + Advisor governance | M04 | Beginner Lab-04 | `m04/.../validation/validate.ps1` |
-
-Enterprise Enhancements:
-- Scope/inheritance troubleshooting (Intermediate)
-- Least privilege design challenge (Advanced)
-- Break-glass ops runbook (Intermediate)
-- Deny policy + exemption workflow (Intermediate)
-- Tag compliance reporting (Intermediate)
-
-## Domain 2: Implement and Manage Storage in Azure (LP02)
+## Domain 1: Develop Azure Compute Solutions (LP01)
 
 | Skills Measured Area | Module | Labs | Validation |
 |---|---|---|---|
-| Configure storage accounts | M01 | Beginner Lab-01 + Intermediate Lab-01 | `m01/.../validation/validate.ps1` |
-| Configure blob storage and data protection | M02 | Beginner Lab-02 + Intermediate Lab-02 | `m02/.../validation/validate.ps1` |
-| Configure Azure Files and data movement | M03 | Beginner Lab-03 + Intermediate Lab-03 | `m03/.../validation/validate.ps1` |
-| Configure storage security and governance | M04 | Beginner Lab-04 + Intermediate Lab-04/05 | `m04/.../validation/validate.ps1` |
+| Build application compute on App Service and Azure Functions | M01 | Beginner Lab-01 + Intermediate Lab-01 | `validation/az204-lp01-validate.ps1` |
+| Container-hosted and deployment workflow scenarios | M02 | Advanced Lab-01 + Capstone | `validation/az204-lp01-validate.ps1` |
 
 Enterprise Enhancements:
-- Access and SAS troubleshooting (Intermediate)
-- Immutability and recovery runbook (Intermediate)
-- Encryption/network remediation (Intermediate)
-- Storage compliance reporting (Intermediate)
-- Cross-subscription storage governance design (Advanced)
+- release slot validation drills
+- rollback and remediation workflow
+- managed identity integration checks
 
-## Domain 3: Deploy and Manage Azure Compute Resources (LP03)
+## Domain 2: Develop for Azure Storage (LP02)
 
 | Skills Measured Area | Module | Labs | Validation |
 |---|---|---|---|
-| Deploy and configure Azure virtual machines | M01 | Beginner Lab-01 + Intermediate Lab-01 | `m01/.../validation/validate.ps1` |
-| Configure VM scale and availability | M02 | Beginner Lab-02 + Intermediate Lab-03 | `m02/.../validation/validate.ps1` |
-| Configure App Service and container compute | M03 | Beginner Lab-03 + Intermediate Lab-02 | `m03/.../validation/validate.ps1` |
-| Configure compute security and operations | M04 | Beginner Lab-04 + Intermediate Lab-04/05 | `m04/.../validation/validate.ps1` |
+| Implement Blob Storage application workflows | M01 | Beginner Lab-01 | `validation/az204-lp02-validate.ps1` |
+| Implement Cosmos DB data access and modeling patterns | M02 | Intermediate Lab-01 + Capstone | `validation/az204-lp02-validate.ps1` |
 
 Enterprise Enhancements:
-- VM access and network troubleshooting (Intermediate)
-- VMSS scale behavior and remediation drills (Intermediate)
-- Compute compliance reporting (Intermediate)
-- Least-privilege compute architecture challenge (Advanced)
-- Cross-subscription compute governance design (Advanced)
+- secure storage connection patterns
+- data lifecycle and partitioning review
+- storage remediation workflow
 
-## Domain 4: Configure and Manage Virtual Networks for Azure Administrators (LP04)
+## Domain 3: Implement Azure Security (LP03)
 
 | Skills Measured Area | Module | Labs | Validation |
 |---|---|---|---|
-| Configure virtual networks and subnets | M01 | Beginner Lab-01 + Intermediate Lab-01 | `m01/.../validation/validate.ps1` |
-| Configure connectivity and routing | M02 | Beginner Lab-02 + Intermediate Lab-02/03 | `m02/.../validation/validate.ps1` |
-| Configure load balancing and DNS | M03 | Beginner Lab-03 + Intermediate Lab-03 | `m03/.../validation/validate.ps1` |
-| Configure network security and diagnostics | M04 | Beginner Lab-04 + Intermediate Lab-04/05 | `m04/.../validation/validate.ps1` |
+| Implement managed identity and Key Vault access | M01 | Planned | `validation/az204-lp03-validate.ps1` |
+| Implement auth flows and secure configuration | M02 | Planned | `validation/az204-lp03-validate.ps1` |
 
 Enterprise Enhancements:
-- Hybrid connectivity troubleshooting drills (Intermediate)
-- Routing and peering operations playbook (Intermediate)
-- Network compliance reporting (Intermediate)
-- Network least-privilege architecture challenge (Advanced)
-- Cross-subscription network governance design (Advanced)
+- least-privilege app identity design
+- secret rotation remediation exercise
+- secure configuration review checklist
 
-## Domain 5: Monitor and Back Up Azure Resources (LP05)
+## Domain 4: Monitor, Troubleshoot, and Optimize Azure Solutions (LP04)
 
 | Skills Measured Area | Module | Labs | Validation |
 |---|---|---|---|
-| Configure monitoring baseline and telemetry | M01 | Beginner Lab-01 + Intermediate Lab-01 | `m01/.../validation/validate.ps1` |
-| Configure alerting and query-based triage | M02 | Beginner Lab-02 + Intermediate Lab-02 | `m02/.../validation/validate.ps1` |
-| Configure backup policies and restore workflows | M03 | Beginner Lab-03 + Intermediate Lab-03 | `m03/.../validation/validate.ps1` |
-| Configure monitoring governance and remediation | M04 | Beginner Lab-04 + Intermediate Lab-04/05 | `m04/.../validation/validate.ps1` |
+| Implement telemetry, tracing, and application monitoring | M01 | Planned | `validation/az204-lp04-validate.ps1` |
+| Troubleshoot and optimize application performance | M02 | Planned | `validation/az204-lp04-validate.ps1` |
 
 Enterprise Enhancements:
-- Alert tuning and noise reduction drills (Intermediate)
-- Backup restore operations runbook (Intermediate)
-- Monitoring compliance reporting (Intermediate)
-- Observability least-privilege design challenge (Advanced)
-- Cross-subscription monitoring governance design (Advanced)
+- KQL and triage workflows
+- failure remediation runbooks
+- performance baseline comparison
+
+## Domain 5: Connect to and Consume Azure Services and Third-Party Services (LP05)
+
+| Skills Measured Area | Module | Labs | Validation |
+|---|---|---|---|
+| Integrate messaging and event-driven services | M01 | Planned | `validation/az204-lp05-validate.ps1` |
+| Integrate external APIs and service mediation | M02 | Planned | `validation/az204-lp05-validate.ps1` |
+
+Enterprise Enhancements:
+- event-driven troubleshooting drills
+- API integration contract validation
+- message flow remediation scenarios
